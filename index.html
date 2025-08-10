@@ -4,7 +4,6 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <title>모바일 바코드 제네레이터</title>
-
 <style>
   *{box-sizing:border-box} body{margin:0;font-family:system-ui,apple-system,Segoe UI,Roboto,Helvetica,Arial}
   .topbar{position:sticky; top:0; z-index:10; background:#fff; border-bottom:1px solid #eee; padding:10px; display:flex; flex-direction:column; gap:8px}
@@ -12,14 +11,24 @@
   .controls input[type=text]{flex:1; height:40px; padding:0 12px; font-size:16px; border:1px solid #ddd; border-radius:10px}
   .btn{height:40px; padding:0 14px; border-radius:10px; border:1px solid #111; background:#111; color:#fff; font-weight:600}
   .btn.outline{background:#fff; color:#111}
-  .slot-col{display:flex; flex-direction:column; gap:8px; max-height:70vh; overflow-y:auto; padding-bottom:4px}
+  .slot-col{display:flex; flex-direction:column; gap:8px; max-height:60vh; overflow-y:auto; padding-bottom:4px}
   .slot{display:flex; align-items:center; gap:8px; border:1px solid #eee; border-radius:12px; padding:8px}
   .slot svg{width:160px; height:80px}
   .slot .code{font-size:14px; word-break:break-all; color:#333; flex:1}
   .slot .del{width:26px; height:26px; border:none; border-radius:50%; font-size:16px; line-height:26px; background:#f4f4f5; color:#444}
   .wrap{padding:12px}
+
+  .scanBox{position:relative}
   video{width:100%; border-radius:12px; background:#000}
+  .guide{position:absolute; inset:0; pointer-events:none}
+  .guide:after{
+    content:""; position:absolute; left:50%; top:50%; width:70%; height:40%;
+    transform:translate(-50%,-50%); border:2px solid rgba(255,255,255,.9); border-radius:12px;
+    box-shadow:0 0 0 9999px rgba(0,0,0,.35);
+  }
+  .head{display:flex; align-items:center; justify-content:space-between; gap:8px}
   .badge{display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; background:#f4f4f5; margin-left:6px}
+  .row{display:flex; gap:8px; margin:8px 0}
 </style>
 
 <!-- JsBarcode -->
@@ -39,23 +48,35 @@
 </header>
 
 <main class="wrap">
-  <h3>카메라로 제품 바코드 스캔 <span class="badge" id="camStatus">대기</span></h3>
-  <div style="display:flex; gap:8px; margin:8px 0;">
+  <div class="head">
+    <h3 style="margin:0">카메라로 제품 바코드 스캔 <span class="badge" id="camStatus">대기</span></h3>
+    <div class="row" style="margin:0">
+      <button id="torchBtn" class="btn outline" style="height:32px;padding:0 10px">토치</button>
+    </div>
+  </div>
+  <div class="row">
     <button id="scanBtn" class="btn" style="flex:1">스캔 시작</button>
     <button id="stopBtn" class="btn outline" style="flex:1">스캔 정지</button>
   </div>
-  <video id="preview" playsinline muted></video>
+
+  <div class="scanBox">
+    <video id="preview" playsinline muted></video>
+    <div class="guide"></div>
+  </div>
+  <p id="lastMsg" class="badge" style="display:inline-block;margin-top:8px">결과 없음</p>
 </main>
 
 <script>
 (() => {
-  if (!window.ZXing) {
-    alert('ZXing 라이브러리 로드 실패');
-    return;
-  }
+  if (!window.ZXing) { alert('ZXing 로드 실패'); return; }
 
   const MAX = 5;
-  const state = { items: [], lastDetected:"", lastDetectAt:0, running:false, reader:null };
+  const state = {
+    items: [],
+    lastDetected: "", lastDetectAt: 0,
+    running: false, reader: null,
+    track: null, torchOn: false
+  };
 
   const $col = document.getElementById('slotCol');
   const $input = document.getElementById('textInput');
@@ -65,6 +86,11 @@
   const $stop = document.getElementById('stopBtn');
   const $video = document.getElementById('preview');
   const $camStatus = document.getElementById('camStatus');
+  const $torch = document.getElementById('torchBtn');
+  const $lastMsg = document.getElementById('lastMsg');
+
+  // 간단 비프음
+  const beep = new Audio('data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA...'); // 짧은 무음/비프를 쓰고 싶으면 실제 데이터로 교체
 
   // 대문자 고정
   $input.addEventListener('input', () => {
@@ -81,16 +107,8 @@
     if (state.items.length > MAX) state.items.length = MAX;
     render();
   }
-
-  function removeBarcode(id) {
-    state.items = state.items.filter(it => it.id !== id);
-    render();
-  }
-
-  function clearAll() {
-    state.items = [];
-    render();
-  }
+  function removeBarcode(id) { state.items = state.items.filter(it => it.id !== id); render(); }
+  function clearAll() { state.items = []; render(); }
 
   function render() {
     $col.innerHTML = '';
@@ -102,9 +120,7 @@
       del.onclick = () => removeBarcode(it.id);
       row.appendChild(svg); row.appendChild(txt); row.appendChild(del);
       $col.appendChild(row);
-      try {
-        JsBarcode(svg, it.text, { format:"CODE128", width:2, height:80, displayValue:false, margin:8 });
-      } catch {}
+      try { JsBarcode(svg, it.text, { format:"CODE128", width:2, height:80, displayValue:false, margin:8 }); } catch {}
     });
   }
 
@@ -112,59 +128,71 @@
   $input.onkeydown = e => { if (e.key==='Enter') { e.preventDefault(); $gen.click(); } };
   $clear.onclick = clearAll;
 
+  // 토치 토글 (지원 기기만)
+  $torch.onclick = async () => {
+    try {
+      if (!state.track) return alert('카메라가 켜진 뒤 사용 가능합니다.');
+      const capabilities = state.track.getCapabilities?.();
+      if (!capabilities || !('torch' in capabilities)) return alert('이 기기는 토치를 지원하지 않습니다.');
+      state.torchOn = !state.torchOn;
+      await state.track.applyConstraints({ advanced: [{ torch: state.torchOn }] });
+      $torch.textContent = state.torchOn ? '토치 끔' : '토치';
+    } catch (e) {
+      alert('토치 제어 실패: ' + (e?.message || e));
+    }
+  };
+
   async function startScan() {
-    // HTTPS / localhost 체크
     if (!window.isSecureContext) {
-      alert('카메라는 보안 컨텍스트에서만 동작합니다.\nHTTPS로 접속하거나 안드로이드에서 localhost 서버로 열어주세요.');
+      alert('카메라는 HTTPS 또는 localhost에서만 동작합니다. GitHub Pages로 접속해주세요.');
       return;
     }
-
     if (state.running) return;
-    try {
-      $camStatus.textContent = '시작중…';
-      const { BrowserMultiFormatReader, NotFoundException } = ZXing;
-      state.reader = new BrowserMultiFormatReader();
-      state.running = true;
 
+    // ZXing 힌트 설정: 상품 바코드 위주
+    const H = ZXing.DecodeHintType;
+    const F = ZXing.BarcodeFormat;
+    const hints = new Map();
+    hints.set(H.POSSIBLE_FORMATS, [
+      F.EAN_13, F.EAN_8, F.UPC_A, F.CODE_128, F.CODE_39, F.ITF
+      // 필요하면 QR_CODE 등 추가
+    ]);
+    hints.set(H.TRY_HARDER, true);
+
+    state.reader = new ZXing.BrowserMultiFormatReader(hints, 700); // 700ms 간격
+    state.running = true;
+    $camStatus.textContent = '시작중…';
+
+    // 권한/스트림 프리플라이트: 해상도/후면/AF 시도
+    let stream;
+    const consList = [
+      { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
+      { video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } },
+      { video: { facingMode: 'environment' } },
+      { video: true }
+    ];
+    for (const c of consList) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(c);
+        break;
+      } catch (e) { /* 다음 시도 */ }
+    }
+    if (!stream) {
+      alert('카메라 스트림을 열 수 없습니다. 권한/브라우저를 확인하세요.');
+      state.running = false; return;
+    }
+
+    // 프리뷰 연결 + 트랙 참조(토치/포커스용)
+    $video.srcObject = stream;
+    await $video.play();
+    state.track = stream.getVideoTracks()[0];
+
+    // 실제 디코딩 시작 (constraints 방식)
+    try {
+      $camStatus.textContent = '검색중…';
       await state.reader.decodeFromConstraints(
-        { video: { facingMode: "environment" } },
+        // decode 단계도 환경/해상도를 유지
+        { video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } },
         $video,
         (result, err) => {
           if (result) {
-            const now = Date.now();
-            const text = result.getText ? result.getText() : result.text;
-            if (text === state.lastDetected && (now - state.lastDetectAt) < 1500) return;
-            state.lastDetected = text;
-            state.lastDetectAt = now;
-            addBarcode(text);
-            $camStatus.textContent = '감지됨';
-          } else if (err && !(err instanceof NotFoundException)) {
-            $camStatus.textContent = '오류'; console.warn(err);
-          } else {
-            $camStatus.textContent = '검색중…';
-          }
-        }
-      );
-    } catch (e) {
-      $camStatus.textContent = '오류';
-      alert('스캔 시작 실패: ' + (e?.message || e));
-      stopScan();
-    }
-  }
-
-  function stopScan() {
-    state.running = false;
-    try { state.reader?.reset(); } catch {}
-    const s = $video.srcObject; 
-    if (s) { s.getTracks().forEach(t => t.stop()); $video.srcObject = null; }
-    $camStatus.textContent = '정지';
-  }
-
-  $scan.onclick = startScan;
-  $stop.onclick = stopScan;
-
-  render();
-})();
-</script>
-</body>
-</html>
