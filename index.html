@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>모바일 바코드 제네레이터 (Samsung Internet Optimized)</title>
+<title>모바일 바코드 제네레레이터 (Tap-to-Scan)</title>
 <style>
   *{box-sizing:border-box} body{margin:0;font-family:system-ui,apple-system,Segoe UI,Roboto,Helvetica,Arial}
   .topbar{position:sticky; top:0; z-index:10; background:#fff; border-bottom:1px solid #eee; padding:10px; display:flex; flex-direction:column; gap:8px}
   .controls{display:flex; gap:8px}
-  .controls input[type=text]{flex:1; height:40px; padding:0 12px; font-size:16px; border:1px solid #ddd; border-radius:10px}
+  .controls input{flex:1; height:40px; padding:0 12px; font-size:16px; border:1px solid #ddd; border-radius:10px}
   .btn{height:40px; padding:0 14px; border-radius:10px; border:1px solid #111; background:#111; color:#fff; font-weight:600}
   .btn.outline{background:#fff; color:#111}
   .slot-col{display:flex; flex-direction:column; gap:8px; max-height:58vh; overflow-y:auto; padding-bottom:4px}
@@ -24,24 +24,23 @@
     content:""; position:absolute; left:50%; top:50%; width:86%; max-width:560px; height:34%;
     transform:translate(-50%,-50%); border:2px solid rgba(255,255,255,.95); border-radius:12px;
     box-shadow:0 0 0 9999px rgba(0,0,0,.35);
+    transition: left .12s ease, top .12s ease;
   }
   .head{display:flex; align-items:center; justify-content:space-between; gap:8px}
   .badge{display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; background:#f4f4f5; margin-left:6px}
   .row{display:flex; gap:8px; margin:8px 0}
 </style>
-<!-- JsBarcode (생성용) -->
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-<!-- ZXing UMD (스캔용) -->
 <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 </head>
 <body>
 <header class="topbar">
   <div class="controls">
-    <input id="textInput" type="text" placeholder="문자/숫자 입력 (자동 대문자)" inputmode="latin" autocomplete="off" />
+    <input id="textInput" type="text" placeholder="문자/숫자 입력 (자동 대문자·수동은 CODE128로 생성)" inputmode="latin" autocomplete="off" />
     <button id="genBtn" class="btn">생성</button>
     <button id="clearBtn" class="btn outline">전체지움</button>
   </div>
-  <div class="slot-col" id="slotCol" aria-label="고정된 바코드들 (최대 5개)"></div>
+  <div class="slot-col" id="slotCol"></div>
 </header>
 
 <main class="wrap">
@@ -56,11 +55,11 @@
     <button id="stopBtn" class="btn outline" style="flex:1">스캔 정지</button>
   </div>
 
-  <div class="scanBox">
+  <div class="scanBox" id="scanBox" title="바코드 위치를 탭하면 해당 영역만 인식합니다.">
     <video id="preview" playsinline muted></video>
-    <div class="guide"></div>
+    <div class="guide" id="guide"></div>
   </div>
-  <p id="lastMsg" class="badge" style="display:inline-block;margin-top:8px">결과 없음</p>
+  <p id="lastMsg" class="badge" style="display:inline-block;margin-top:8px">영상 영역을 탭하면 해당 위치만 인식합니다.</p>
 </main>
 
 <script>
@@ -68,11 +67,11 @@
   if (!window.ZXing) { alert('ZXing 로드 실패'); return; }
 
   const MAX = 5;
-  const COOLDOWN_MS = 1000; // ✅ 인식 후 1초 쿨다운
+  const COOLDOWN_MS = 1000; // 인식 후 1초 대기
   let cooldownUntil = 0;
 
   const state = {
-    items: [],
+    items: [], // {id,text,srcFmt,renderFmt}
     lastDetected: "", lastDetectAt: 0,
     running: false,
     track: null, torchOn: false,
@@ -89,6 +88,8 @@
   const $camStatus = document.getElementById('camStatus');
   const $torch = document.getElementById('torchBtn');
   const $lastMsg = document.getElementById('lastMsg');
+  const $scanBox = document.getElementById('scanBox');
+  const $guide = document.getElementById('guide');
 
   // 입력: 대문자 고정
   $input.addEventListener('input', () => {
@@ -97,11 +98,25 @@
     $input.setSelectionRange(pos, pos);
   });
 
-  function addBarcode(text) {
+  // ZXing → JsBarcode 포맷 매핑
+  function mapFormat(zf, text){
+    const BF = ZXing.BarcodeFormat;
+    switch (zf) {
+      case BF.EAN_13: return "EAN13";
+      case BF.EAN_8:  return "EAN8";
+      case BF.UPC_A:  return "UPC";
+      case BF.CODE_39:return "CODE39";
+      case BF.CODE_128:return "CODE128";
+      case BF.ITF:    return /^\d{14}$/.test(text) ? "ITF14" : "CODE128";
+      default:        return "CODE128";
+    }
+  }
+
+  function addBarcode(text, srcFmtLabel="MANUAL", renderFmt="CODE128") {
     if (!text) return;
     text = String(text).toUpperCase();
     state.items = state.items.filter(it => it.text !== text);
-    state.items.unshift({ id: crypto.randomUUID(), text });
+    state.items.unshift({ id: crypto.randomUUID(), text, srcFmt: srcFmtLabel, renderFmt });
     if (state.items.length > MAX) state.items.length = MAX;
     render();
   }
@@ -111,16 +126,26 @@
     $col.innerHTML = '';
     state.items.forEach(it => {
       const row = document.createElement('div'); row.className = 'slot';
+      const info = document.createElement('div'); info.style.flex='1';
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       const txt = document.createElement('div'); txt.className = 'code'; txt.textContent = it.text;
+      const meta = document.createElement('div'); meta.style.fontSize='11px'; meta.style.color='#777';
+      meta.textContent = (it.srcFmt === 'MANUAL')
+        ? `생성 포맷: ${it.renderFmt}`
+        : `스캔 포맷: ${it.srcFmt} → 생성 포맷: ${it.renderFmt}`;
       const del = document.createElement('button'); del.className = 'del'; del.textContent = '×';
       del.onclick = () => removeBarcode(it.id);
-      row.appendChild(svg); row.appendChild(txt); row.appendChild(del);
+
+      info.appendChild(txt); info.appendChild(meta);
+      row.appendChild(svg); row.appendChild(info); row.appendChild(del);
       $col.appendChild(row);
-      try { JsBarcode(svg, it.text, { format:"CODE128", width:2, height:80, displayValue:false, margin:8 }); } catch {}
+
+      try {
+        JsBarcode(svg, it.text, { format: it.renderFmt, width: 2, height: 80, displayValue: false, margin: 8 });
+      } catch(e) { meta.textContent += ` (렌더 실패: ${e?.message||e})`; }
     });
   }
-  $gen.onclick = () => { addBarcode($input.value.trim()); $input.value=''; $input.focus(); };
+  $gen.onclick = () => { addBarcode($input.value.trim(), "MANUAL", "CODE128"); $input.value=''; $input.focus(); };
   $input.onkeydown = e => { if (e.key==='Enter') { e.preventDefault(); $gen.click(); } };
   $clear.onclick = clearAll;
 
@@ -136,117 +161,154 @@
     } catch (e) { alert('토치 실패: ' + (e?.message || e)); }
   };
 
-  // === 삼성인터넷 최적화: ZXing만 사용, 후면 카메라 정확 선택 ===
+  // 장치 선택 (후면 우선)
   let reader = null;
-
   async function pickBackCameraDeviceId() {
-    // 권한 먼저 받아야 라벨이 보입니다.
-    let tmpStream;
-    try {
-      tmpStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal:'environment' } } });
-      tmpStream.getTracks().forEach(t => t.stop());
-    } catch(_) { /* 무시 */ }
-
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videos = devices.filter(d => d.kind === 'videoinput');
-
-    // 라벨에 rear/environment/back 있으면 우선
-    const rear = videos.find(d => /rear|back|environment|후면/i.test(d.label));
-    return (rear?.deviceId) || (videos[1]?.deviceId) || (videos[0]?.deviceId) || null;
+    let tmp; try { tmp = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal:'environment' } } }); tmp.getTracks().forEach(t=>t.stop()); } catch(_){}
+    const devs = await navigator.mediaDevices.enumerateDevices(); const vids = devs.filter(d => d.kind === 'videoinput');
+    const rear = vids.find(d => /rear|back|environment|후면/i.test(d.label));
+    return (rear?.deviceId) || (vids[1]?.deviceId) || (vids[0]?.deviceId) || null;
   }
 
+  // 스캔 시작/정지 (연속 스캔)
   async function startScan() {
-    if (!window.isSecureContext) {
-      alert('카메라는 HTTPS 또는 localhost에서만 동작합니다. GitHub Pages(https)로 접속해주세요.');
-      return;
-    }
+    if (!window.isSecureContext) { alert('HTTPS 또는 localhost에서만 동작합니다.'); return; }
     if (state.running) return;
 
     state.running = true;
     $camStatus.textContent = '시작중…';
 
     const deviceId = await pickBackCameraDeviceId();
-    if (!deviceId) {
-      alert('비디오 입력 장치를 찾지 못했습니다. 권한 허용 후 다시 시도하세요.');
-      state.running = false; return;
-    }
+    if (!deviceId) { alert('카메라 장치를 찾지 못했습니다.'); state.running = false; return; }
 
-    // 미리 프리뷰를 띄워서 AF/노출이 안정화되도록
+    // 프리뷰 (해상도 우선 시도)
     let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          deviceId: { exact: deviceId },
-          width: { ideal: 1920 }, height: { ideal: 1080 }
-        }
-      });
-      $video.srcObject = stream;
-      await $video.play();
-      state.track = stream.getVideoTracks()[0];
-    } catch (e) {
-      alert('카메라 열기 실패: ' + (e?.message || e));
-      state.running = false; return;
-    }
+    for (const cons of [
+      { video: { deviceId: { exact: deviceId }, width:{ideal:2560}, height:{ideal:1440} } },
+      { video: { deviceId: { exact: deviceId }, width:{ideal:1920}, height:{ideal:1080} } },
+      { video: { deviceId: { exact: deviceId } } }
+    ]) { try { stream = await navigator.mediaDevices.getUserMedia(cons); break; } catch {} }
+    if (!stream) { alert('카메라 열기 실패'); state.running = false; return; }
 
-    try {
-      // ZXing 힌트(상품 바코드 우선) + TRY_HARDER
-      const H = ZXing.DecodeHintType, F = ZXing.BarcodeFormat;
-      const hints = new Map();
-      hints.set(H.POSSIBLE_FORMATS, [F.EAN_13, F.EAN_8, F.UPC_A, F.CODE_128, F.CODE_39, F.ITF]);
-      hints.set(H.TRY_HARDER, true);
+    $video.srcObject = stream; await $video.play();
+    state.track = stream.getVideoTracks()[0];
 
-      reader = new ZXing.BrowserMultiFormatReader(hints, 600);
-      await reader.decodeFromVideoDevice(
-        deviceId,
-        $video,
-        (result, err) => {
-          // 쿨다운 중엔 전부 무시
-          const now = Date.now();
-          if (now < cooldownUntil) {
-            $camStatus.textContent = '대기중…';
-            return;
-          }
+    // ZXing 힌트 (상품형 중심)
+    const H = ZXing.DecodeHintType, F = ZXing.BarcodeFormat;
+    const hints = new Map(); hints.set(H.POSSIBLE_FORMATS, [F.EAN_13, F.EAN_8, F.UPC_A, F.CODE_128, F.CODE_39, F.ITF]); hints.set(H.TRY_HARDER, true);
+    reader = new ZXing.BrowserMultiFormatReader(hints, 500);
 
-          if (result) {
-            const text = result.getText ? result.getText() : result.text;
-
-            // 직전과 동일한 값이더라도, 쿨다운 기준으로만 제어 (원하면 아래 조건을 유지)
-            // if (text === state.lastDetected && (now - state.lastDetectAt) < COOLDOWN_MS) return;
-
-            state.lastDetected = text;
-            state.lastDetectAt = now;
-            addBarcode(text);
-            $lastMsg.textContent = `인식: ${text}`;
-            $camStatus.textContent = '감지됨';
-
-            // ✅ 인식 후 1초 쿨다운 시작
-            cooldownUntil = now + COOLDOWN_MS;
-          } else if (err && !(err instanceof ZXing.NotFoundException)) {
-            console.warn(err);
-            $camStatus.textContent = '오류';
-          } else {
-            $camStatus.textContent = '검색중…';
-          }
-        }
-      );
-    } catch (e) {
-      alert('스캔 시작 실패: ' + (e?.message || e));
-      stopScan();
-    }
+    await reader.decodeFromVideoDevice(deviceId, $video, (result, err) => {
+      const now = Date.now();
+      if (now < cooldownUntil) { $camStatus.textContent = '대기중…'; return; }
+      if (result) {
+        const text = result.getText ? result.getText() : result.text;
+        const fmtEnum = result.getBarcodeFormat ? result.getBarcodeFormat() : result.barcodeFormat;
+        const fmtLabel = ZXing.BarcodeFormat[fmtEnum] || 'UNKNOWN';
+        const renderFmt = mapFormat(fmtEnum, text);
+        state.lastDetected = text; state.lastDetectAt = now;
+        addBarcode(text, fmtLabel, renderFmt);
+        $lastMsg.textContent = `인식: ${text} (${fmtLabel})`;
+        $camStatus.textContent = '감지됨';
+        cooldownUntil = now + COOLDOWN_MS;
+      } else if (err && !(err instanceof ZXing.NotFoundException)) {
+        console.warn(err); $camStatus.textContent = '오류';
+      } else {
+        $camStatus.textContent = '검색중…';
+      }
+    });
   }
 
   function stopScan() {
     state.running = false;
     try { reader?.reset(); } catch {}
-    const s = $video.srcObject; if (s) { s.getTracks().forEach(t => t.stop()); $video.srcObject=null; }
-    state.track = null; state.torchOn = false;
-    cooldownUntil = 0; // 쿨다운 초기화
-    $camStatus.textContent = '정지';
+    const s = $video.srcObject; if (s) { s.getTracks().forEach(t => t.stop()); $video.srcObject = null; }
+    state.track = null; state.torchOn = false; cooldownUntil = 0; $camStatus.textContent = '정지';
   }
 
-  // 버튼 연결
   document.getElementById('scanBtn').onclick = startScan;
   document.getElementById('stopBtn').onclick = stopScan;
+
+  // ────────────── 탭-투-스캔(해당 위치만 인식) ──────────────
+  const roiCanvas = document.createElement('canvas');
+  const roiCtx = roiCanvas.getContext('2d', { willReadFrequently:true });
+
+  $scanBox.addEventListener('click', async (e) => {
+    if (!$video.videoWidth) return;
+    const now = Date.now(); if (now < cooldownUntil) return;
+
+    // 터치 위치 → 비디오 좌표
+    const rect = $video.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / rect.width;
+    const py = (e.clientY - rect.top) / rect.height;
+
+    // 가이드 박스를 탭 위치로 잠깐 이동(시각 피드백)
+    $guide.style.setProperty('--x', (px*100)+'%');
+    $guide.style.setProperty('--y', (py*100)+'%');
+    $guide.style.setProperty('left', (px*100)+'%'); // transition용
+
+    // ROI 크기(영상 기준): 가로 60%, 세로 28% 정도
+    const vw = $video.videoWidth, vh = $video.videoHeight;
+    const rw = Math.round(vw * 0.60), rh = Math.round(vh * 0.28);
+    let cx = Math.round(vw * px), cy = Math.round(vh * py);
+    let x = Math.max(0, Math.min(vw - rw, cx - Math.round(rw/2)));
+    let y = Math.max(0, Math.min(vh - rh, cy - Math.round(rh/2)));
+
+    // 캔버스에 ROI 캡처
+    roiCanvas.width = rw; roiCanvas.height = rh;
+    roiCtx.drawImage($video, x, y, rw, rh, 0, 0, rw, rh);
+
+    // 1) BarcodeDetector 있으면 우선 사용
+    if ('BarcodeDetector' in window) {
+      try {
+        const det = new window.BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','code_128','code_39','itf'] });
+        const bmp = await createImageBitmap(roiCanvas);
+        const res = await det.detect(bmp);
+        if (res && res.length) {
+          const pick = res[0];
+          onTapDetected(pick.rawValue, pick.format);
+          return;
+        }
+      } catch(_) {}
+    }
+
+    // 2) ZXing로 ROI 1회 디코드
+    try {
+      const H = ZXing.DecodeHintType, F = ZXing.BarcodeFormat;
+      const hints = new Map(); hints.set(H.POSSIBLE_FORMATS, [F.EAN_13,F.EAN_8,F.UPC_A,F.CODE_128,F.CODE_39,F.ITF]); hints.set(H.TRY_HARDER,true);
+      const one = new ZXing.BrowserMultiFormatReader(hints);
+      // canvas → dataURL → img
+      const img = new Image();
+      img.onload = async () => {
+        try {
+          const result = await one.decodeFromImage(img);
+          const text = result.getText ? result.getText() : result.text;
+          const fmtEnum = result.getBarcodeFormat ? result.getBarcodeFormat() : result.barcodeFormat;
+          const fmtLabel = ZXing.BarcodeFormat[fmtEnum] || 'UNKNOWN';
+          onTapDetected(text, fmtLabel, fmtEnum);
+        } catch (err) {
+          $lastMsg.textContent = '탭 영역에서 바코드 미검출';
+        }
+      };
+      img.src = roiCanvas.toDataURL('image/png');
+    } catch (e) {
+      $lastMsg.textContent = '탭 스캔 오류';
+    }
+  });
+
+  function onTapDetected(text, fmtLabel, fmtEnum){
+    const now = Date.now(); if (!text) return;
+    const renderFmt = (typeof fmtEnum === 'number') ? mapFormat(fmtEnum, text) : // ZXing enum
+                      (fmtLabel && fmtLabel.toUpperCase().includes('EAN_13')) ? 'EAN13' :
+                      (fmtLabel && fmtLabel.toUpperCase().includes('EAN_8'))  ? 'EAN8'  :
+                      (fmtLabel && fmtLabel.toUpperCase().includes('UPC_A'))  ? 'UPC'   :
+                      (fmtLabel && fmtLabel.toUpperCase().includes('CODE_39'))? 'CODE39': 'CODE128';
+
+    addBarcode(text, fmtLabel || 'TAP', renderFmt);
+    $lastMsg.textContent = `탭 인식: ${text} (${fmtLabel||'?'})`;
+    $camStatus.textContent = '감지됨';
+    cooldownUntil = now + COOLDOWN_MS; // 1초 대기
+  }
 
   render();
 })();
