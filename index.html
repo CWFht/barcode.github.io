@@ -68,6 +68,9 @@
   if (!window.ZXing) { alert('ZXing 로드 실패'); return; }
 
   const MAX = 5;
+  const COOLDOWN_MS = 1000; // ✅ 인식 후 1초 쿨다운
+  let cooldownUntil = 0;
+
   const state = {
     items: [],
     lastDetected: "", lastDetectAt: 0,
@@ -197,14 +200,27 @@
         deviceId,
         $video,
         (result, err) => {
+          // 쿨다운 중엔 전부 무시
+          const now = Date.now();
+          if (now < cooldownUntil) {
+            $camStatus.textContent = '대기중…';
+            return;
+          }
+
           if (result) {
             const text = result.getText ? result.getText() : result.text;
-            const now = Date.now();
-            if (text === state.lastDetected && (now - state.lastDetectAt) < 1200) return;
-            state.lastDetected = text; state.lastDetectAt = now;
+
+            // 직전과 동일한 값이더라도, 쿨다운 기준으로만 제어 (원하면 아래 조건을 유지)
+            // if (text === state.lastDetected && (now - state.lastDetectAt) < COOLDOWN_MS) return;
+
+            state.lastDetected = text;
+            state.lastDetectAt = now;
             addBarcode(text);
             $lastMsg.textContent = `인식: ${text}`;
             $camStatus.textContent = '감지됨';
+
+            // ✅ 인식 후 1초 쿨다운 시작
+            cooldownUntil = now + COOLDOWN_MS;
           } else if (err && !(err instanceof ZXing.NotFoundException)) {
             console.warn(err);
             $camStatus.textContent = '오류';
@@ -224,6 +240,7 @@
     try { reader?.reset(); } catch {}
     const s = $video.srcObject; if (s) { s.getTracks().forEach(t => t.stop()); $video.srcObject=null; }
     state.track = null; state.torchOn = false;
+    cooldownUntil = 0; // 쿨다운 초기화
     $camStatus.textContent = '정지';
   }
 
