@@ -1,80 +1,66 @@
 <!doctype html>
 <html lang="ko">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>모바일 바코드 스캔 & 생성 (튜닝판)</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>모바일 바코드 제네레이터 (Samsung Internet Optimized)</title>
 <style>
-  *{box-sizing:border-box} body{margin:0;font-family:system-ui,apple-system,Roboto,Helvetica,Arial}
-  .topbar{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #eee;padding:10px;display:flex;flex-direction:column;gap:8px}
-  .row{display:flex;gap:8px;align-items:center}
-  .controls .row{flex-wrap:wrap}
-  input,select{height:36px;border:1px solid #ddd;border-radius:8px;padding:0 10px;font-size:14px}
-  .btn{height:36px;padding:0 12px;border-radius:8px;border:1px solid #111;background:#111;color:#fff;font-weight:600}
-  .btn.outline{background:#fff;color:#111}
-  .slot-col{display:flex;flex-direction:column;gap:8px;max-height:48vh;overflow-y:auto}
-  .slot{display:flex;align-items:center;gap:8px;border:1px solid #eee;border-radius:12px;padding:8px}
-  .slot svg{width:160px;height:80px}
-  .slot .code{font-size:14px;word-break:break-all;color:#333;flex:1}
-  .slot .del{width:26px;height:26px;border:none;border-radius:50%;font-size:16px;line-height:26px;background:#f4f4f5;color:#444}
+  *{box-sizing:border-box} body{margin:0;font-family:system-ui,apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .topbar{position:sticky; top:0; z-index:10; background:#fff; border-bottom:1px solid #eee; padding:10px; display:flex; flex-direction:column; gap:8px}
+  .controls{display:flex; gap:8px}
+  .controls input[type=text]{flex:1; height:40px; padding:0 12px; font-size:16px; border:1px solid #ddd; border-radius:10px}
+  .btn{height:40px; padding:0 14px; border-radius:10px; border:1px solid #111; background:#111; color:#fff; font-weight:600}
+  .btn.outline{background:#fff; color:#111}
+  .slot-col{display:flex; flex-direction:column; gap:8px; max-height:58vh; overflow-y:auto; padding-bottom:4px}
+  .slot{display:flex; align-items:center; gap:8px; border:1px solid #eee; border-radius:12px; padding:8px}
+  .slot svg{width:160px; height:80px}
+  .slot .code{font-size:14px; word-break:break-all; color:#333; flex:1}
+  .slot .del{width:26px; height:26px; border:none; border-radius:50%; font-size:16px; line-height:26px; background:#f4f4f5; color:#444}
   .wrap{padding:12px}
   .scanBox{position:relative}
-  video{width:100%;border-radius:12px;background:#000}
-  .guide{position:absolute;inset:0;pointer-events:none}
-  .guide:after{content:"";position:absolute;left:50%;top:50%;width:86%;max-width:560px;height:34%;
-    transform:translate(-50%,-50%);border:2px solid rgba(255,255,255,.95);border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,.35)}
-  .badge{display:inline-block;font-size:12px;padding:4px 8px;border-radius:999px;background:#f4f4f5}
-  .kv{font-size:12px;color:#555;line-height:1.4;margin-top:6px}
-  .sl{display:flex;align-items:center;gap:6px}
-  .sl input{width:120px}
+  video{width:100%; border-radius:12px; background:#000}
+  .guide{position:absolute; inset:0; pointer-events:none}
+  .guide:after{
+    content:""; position:absolute; left:50%; top:50%; width:86%; max-width:560px; height:34%;
+    transform:translate(-50%,-50%); border:2px solid rgba(255,255,255,.95); border-radius:12px;
+    box-shadow:0 0 0 9999px rgba(0,0,0,.35);
+  }
+  .head{display:flex; align-items:center; justify-content:space-between; gap:8px}
+  .badge{display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; background:#f4f4f5; margin-left:6px}
+  .row{display:flex; gap:8px; margin:8px 0}
 </style>
+<!-- JsBarcode (생성용) -->
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<!-- ZXing UMD (스캔용) -->
 <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 </head>
 <body>
 <header class="topbar">
   <div class="controls">
-    <div class="row">
-      <input id="textInput" placeholder="문자/숫자 입력 (자동 대문자)" inputmode="latin" autocomplete="off" style="flex:1;min-width:160px"/>
-      <button id="genBtn" class="btn">생성</button>
-      <button id="clearBtn" class="btn outline">전체지움</button>
-    </div>
-    <div class="row">
-      <label>엔진
-        <select id="engineSel">
-          <option value="zxing" selected>ZXing</option>
-          <option value="detector">BarcodeDetector</option>
-        </select>
-      </label>
-      <label>포맷
-        <select id="formatSel">
-          <option value="retail" selected>상품형(EAN/UPC/128/39/ITF)</option>
-          <option value="plus">+ 확장(C93/RSS/QR)</option>
-        </select>
-      </label>
-      <button id="scanBtn" class="btn">스캔 시작</button>
-      <button id="stopBtn" class="btn outline">스캔 정지</button>
-      <button id="torchBtn" class="btn outline">토치</button>
-    </div>
-    <div class="row sl">
-      <span class="badge">민감도</span>
-      <label>HITS<input id="hits" type="range" min="1" max="4" step="1" value="2"><span id="hitsV">2</span></label>
-      <label>COOL(ms)<input id="cool" type="range" min="600" max="2000" step="100" value="1300"><span id="coolV">1300</span></label>
-      <label>WIN(ms)<input id="win" type="range" min="600" max="2000" step="100" value="1000"><span id="winV">1000</span></label>
-    </div>
-    <div class="kv" id="debug">엔진: -, 장치: -, 해상도: -, 상태: 대기</div>
+    <input id="textInput" type="text" placeholder="문자/숫자 입력 (자동 대문자)" inputmode="latin" autocomplete="off" />
+    <button id="genBtn" class="btn">생성</button>
+    <button id="clearBtn" class="btn outline">전체지움</button>
   </div>
   <div class="slot-col" id="slotCol" aria-label="고정된 바코드들 (최대 5개)"></div>
 </header>
 
 <main class="wrap">
-  <div class="row" style="justify-content:space-between">
-    <div class="row" style="gap:8px"><span class="badge" id="camStatus">대기</span><span class="badge" id="lastMsg">결과 없음</span></div>
+  <div class="head">
+    <h3 style="margin:0">카메라 스캔 <span class="badge" id="camStatus">대기</span></h3>
+    <div class="row" style="margin:0">
+      <button id="torchBtn" class="btn outline" style="height:32px;padding:0 10px">토치</button>
+    </div>
   </div>
+  <div class="row">
+    <button id="scanBtn" class="btn" style="flex:1">스캔 시작</button>
+    <button id="stopBtn" class="btn outline" style="flex:1">스캔 정지</button>
+  </div>
+
   <div class="scanBox">
     <video id="preview" playsinline muted></video>
     <div class="guide"></div>
   </div>
+  <p id="lastMsg" class="badge" style="display:inline-block;margin-top:8px">결과 없음</p>
 </main>
 
 <script>
@@ -82,177 +68,168 @@
   if (!window.ZXing) { alert('ZXing 로드 실패'); return; }
 
   const MAX = 5;
-  // 기본값 (UI에서 바뀜)
-  let COOLDOWN_MS = 1300, REQUIRED_HITS = 2, WINDOW_MS = 1000;
+  const state = {
+    items: [],
+    lastDetected: "", lastDetectAt: 0,
+    running: false,
+    track: null, torchOn: false,
+  };
 
-  const $ = s => document.querySelector(s);
-  const $col = $('#slotCol'), $input = $('#textInput');
-  const $gen = $('#genBtn'), $clear = $('#clearBtn');
-  const $scan = $('#scanBtn'), $stop = $('#stopBtn');
-  const $video = $('#preview'), $camStatus = $('#camStatus'), $lastMsg = $('#lastMsg');
-  const $torch = $('#torchBtn'), $debug = $('#debug');
-  const $engine = $('#engineSel'), $formatSel = $('#formatSel');
+  // DOM
+  const $col = document.getElementById('slotCol');
+  const $input = document.getElementById('textInput');
+  const $gen = document.getElementById('genBtn');
+  const $clear = document.getElementById('clearBtn');
+  const $scan = document.getElementById('scanBtn');
+  const $stop = document.getElementById('stopBtn');
+  const $video = document.getElementById('preview');
+  const $camStatus = document.getElementById('camStatus');
+  const $torch = document.getElementById('torchBtn');
+  const $lastMsg = document.getElementById('lastMsg');
 
-  // 민감도 UI
-  const $hits = $('#hits'), $hitsV = $('#hitsV');
-  const $cool = $('#cool'), $coolV = $('#coolV');
-  const $win = $('#win'), $winV = $('#winV');
-  function bindSl(o, v, cb){ o.addEventListener('input',()=>{ v.textContent=o.value; cb(+o.value); }); }
-  bindSl($hits,$hitsV,val=>REQUIRED_HITS=val);
-  bindSl($cool,$coolV,val=>COOLDOWN_MS=val);
-  bindSl($win,$winV,val=>WINDOW_MS=val);
-
-  // 상태
-  const state = { items:[], lastDetected:"", lastDetectAt:0, running:false, track:null, torchOn:false, deviceLabel:"-" };
-  let stable = { value:"", hits:0, lastAt:0 }, cooldownUntil = 0;
-
-  // 입력 대문자
+  // 입력: 대문자 고정
   $input.addEventListener('input', () => {
     const pos = $input.selectionStart;
     $input.value = $input.value.toUpperCase().replace(/\s+/g,'');
     $input.setSelectionRange(pos, pos);
   });
 
-  function addBarcode(text){
-    if(!text) return; text=String(text).toUpperCase();
-    state.items = state.items.filter(it=>it.text!==text);
+  function addBarcode(text) {
+    if (!text) return;
+    text = String(text).toUpperCase();
+    state.items = state.items.filter(it => it.text !== text);
     state.items.unshift({ id: crypto.randomUUID(), text });
-    if(state.items.length>MAX) state.items.length=MAX;
+    if (state.items.length > MAX) state.items.length = MAX;
     render();
   }
-  function removeBarcode(id){ state.items = state.items.filter(it=>it.id!==id); render(); }
-  function clearAll(){ state.items=[]; render(); }
-  function render(){
-    $col.innerHTML='';
-    state.items.forEach(it=>{
-      const row=document.createElement('div'); row.className='slot';
-      const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-      const txt=document.createElement('div'); txt.className='code'; txt.textContent=it.text;
-      const del=document.createElement('button'); del.className='del'; del.textContent='×'; del.onclick=()=>removeBarcode(it.id);
-      row.appendChild(svg); row.appendChild(txt); row.appendChild(del); $col.appendChild(row);
-      try{ JsBarcode(svg, it.text, { format:"CODE128", width:2, height:80, displayValue:false, margin:8 }); }catch{}
+  function removeBarcode(id) { state.items = state.items.filter(it => it.id !== id); render(); }
+  function clearAll() { state.items = []; render(); }
+  function render() {
+    $col.innerHTML = '';
+    state.items.forEach(it => {
+      const row = document.createElement('div'); row.className = 'slot';
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const txt = document.createElement('div'); txt.className = 'code'; txt.textContent = it.text;
+      const del = document.createElement('button'); del.className = 'del'; del.textContent = '×';
+      del.onclick = () => removeBarcode(it.id);
+      row.appendChild(svg); row.appendChild(txt); row.appendChild(del);
+      $col.appendChild(row);
+      try { JsBarcode(svg, it.text, { format:"CODE128", width:2, height:80, displayValue:false, margin:8 }); } catch {}
     });
   }
-  $gen.onclick = ()=>{ addBarcode($input.value.trim()); $input.value=''; $input.focus(); };
-  $input.onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); $gen.click(); } };
+  $gen.onclick = () => { addBarcode($input.value.trim()); $input.value=''; $input.focus(); };
+  $input.onkeydown = e => { if (e.key==='Enter') { e.preventDefault(); $gen.click(); } };
   $clear.onclick = clearAll;
 
-  // 공통 감지 처리(안정성+쿨다운)
-  function handleRawDetection(text){
-    const now=Date.now(); if(now<cooldownUntil) return;
-    text=String(text||"").trim(); if(!text) return;
-    if(stable.value===text && (now-stable.lastAt)<=WINDOW_MS){ stable.hits+=1; stable.lastAt=now; }
-    else { stable={ value:text, hits:1, lastAt:now }; }
-    if(stable.hits>=REQUIRED_HITS){
-      const dupQuick=(text===state.lastDetected)&&((now-state.lastDetectAt)<COOLDOWN_MS);
-      if(dupQuick) return;
-      state.lastDetected=text; state.lastDetectAt=now; cooldownUntil=now+COOLDOWN_MS;
-      addBarcode(text); $lastMsg.textContent=`인식: ${text}`; $camStatus.textContent='감지됨';
-      stable={ value:"", hits:0, lastAt:0 };
-    } else {
-      $camStatus.textContent=`검증중(${stable.hits}/${REQUIRED_HITS})…`;
-    }
-  }
-
   // 토치
-  $torch.onclick = async ()=>{
-    try{
-      if(!state.track) return alert('카메라가 켜진 뒤 사용 가능합니다.');
-      const caps=state.track.getCapabilities?.(); if(!caps || !('torch' in caps)) return alert('토치를 지원하지 않습니다.');
-      state.torchOn=!state.torchOn; await state.track.applyConstraints({ advanced:[{ torch: state.torchOn }] });
-      $torch.textContent=state.torchOn?'토치 끔':'토치';
-    }catch(e){ alert('토치 실패: '+(e?.message||e)); }
+  $torch.onclick = async () => {
+    try {
+      if (!state.track) return alert('카메라가 켜진 뒤 사용 가능합니다.');
+      const caps = state.track.getCapabilities?.();
+      if (!caps || !('torch' in caps)) return alert('토치를 지원하지 않는 기기입니다.');
+      state.torchOn = !state.torchOn;
+      await state.track.applyConstraints({ advanced: [{ torch: state.torchOn }] });
+      $torch.textContent = state.torchOn ? '토치 끔' : '토치';
+    } catch (e) { alert('토치 실패: ' + (e?.message || e)); }
   };
 
-  // 장치 선택 (후면 우선)
-  async function pickBackCameraDeviceId(){
-    let tmp; try{ tmp=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'} } }); tmp.getTracks().forEach(t=>t.stop()); }catch(_){}
-    const devs=await navigator.mediaDevices.enumerateDevices(); const vids=devs.filter(d=>d.kind==='videoinput');
-    const rear=vids.find(d=>/rear|back|environment|후면/i.test(d.label));
-    state.deviceLabel=(rear?.label)||(vids[0]?.label)||'-';
-    return (rear?.deviceId) || (vids[1]?.deviceId) || (vids[0]?.deviceId) || null;
+  // === 삼성인터넷 최적화: ZXing만 사용, 후면 카메라 정확 선택 ===
+  let reader = null;
+
+  async function pickBackCameraDeviceId() {
+    // 권한 먼저 받아야 라벨이 보입니다.
+    let tmpStream;
+    try {
+      tmpStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal:'environment' } } });
+      tmpStream.getTracks().forEach(t => t.stop());
+    } catch(_) { /* 무시 */ }
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videos = devices.filter(d => d.kind === 'videoinput');
+
+    // 라벨에 rear/environment/back 있으면 우선
+    const rear = videos.find(d => /rear|back|environment|후면/i.test(d.label));
+    return (rear?.deviceId) || (videos[1]?.deviceId) || (videos[0]?.deviceId) || null;
   }
 
-  // 스캔 시작/정지
-  let reader=null, det=null, raf=0;
+  async function startScan() {
+    if (!window.isSecureContext) {
+      alert('카메라는 HTTPS 또는 localhost에서만 동작합니다. GitHub Pages(https)로 접속해주세요.');
+      return;
+    }
+    if (state.running) return;
 
-  async function startScan(){
-    if(!window.isSecureContext){ alert('HTTPS 또는 localhost에서만 동작합니다.'); return; }
-    if(state.running) return;
-    state.running=true; $camStatus.textContent='시작중…';
+    state.running = true;
+    $camStatus.textContent = '시작중…';
 
     const deviceId = await pickBackCameraDeviceId();
-    if(!deviceId){ alert('카메라 장치를 찾을 수 없습니다.'); state.running=false; return; }
+    if (!deviceId) {
+      alert('비디오 입력 장치를 찾지 못했습니다. 권한 허용 후 다시 시도하세요.');
+      state.running = false; return;
+    }
 
-    // 미리 프리뷰(해상도↑)
+    // 미리 프리뷰를 띄워서 AF/노출이 안정화되도록
     let stream;
-    const consList=[
-      { video:{ deviceId:{exact:deviceId}, width:{ideal:2560}, height:{ideal:1440} } },
-      { video:{ deviceId:{exact:deviceId}, width:{ideal:1920}, height:{ideal:1080} } },
-      { video:{ deviceId:{exact:deviceId} } }
-    ];
-    for(const c of consList){
-      try{ stream=await navigator.mediaDevices.getUserMedia(c); break; }catch(_){}
-    }
-    if(!stream){ alert('카메라 열기 실패'); state.running=false; return; }
-    $video.srcObject=stream; await $video.play(); state.track=stream.getVideoTracks()[0];
-
-    const vw=$video.videoWidth, vh=$video.videoHeight;
-    $debug.textContent=`엔진: ${$engine.value}, 장치: ${state.deviceLabel}, 해상도: ${vw}×${vh}, 상태: 시작`;
-
-    if($engine.value==='detector' && 'BarcodeDetector' in window){
-      try{
-        const formats = ($formatSel.value==='plus')
-          ? ['ean_13','ean_8','upc_a','code_128','code_39','itf','code_93','rss_14','rss_expanded','qr_code']
-          : ['ean_13','ean_8','upc_a','code_128','code_39','itf'];
-        det = new window.BarcodeDetector({ formats });
-        $camStatus.textContent='검색중…';
-        const detectLoop = async ()=>{
-          if(!state.running || !det) return;
-          try{
-            const res=await det.detect($video);
-            if(res && res.length){
-              const pick = res.find(r=> (r.format!=='qr_code') && (r.boundingBox?.width/(r.boundingBox?.height||1)>2.0)) || res[0];
-              if(pick?.rawValue) handleRawDetection(pick.rawValue);
-            } else { $camStatus.textContent='검색중…'; }
-          }catch(e){ /* 무시 */ }
-          raf=requestAnimationFrame(detectLoop);
-        };
-        raf=requestAnimationFrame(detectLoop);
-        return;
-      }catch(e){
-        // 지원 안 되면 ZXing으로 폴백
-      }
-    }
-
-    // ZXing 경로
-    try{
-      const H=ZXing.DecodeHintType, F=ZXing.BarcodeFormat;
-      const formats = ($formatSel.value==='plus')
-        ? [F.EAN_13,F.EAN_8,F.UPC_A,F.CODE_128,F.CODE_39,F.ITF,F.CODE_93,F.RSS_14,F.RSS_EXPANDED,F.QR_CODE]
-        : [F.EAN_13,F.EAN_8,F.UPC_A,F.CODE_128,F.CODE_39,F.ITF];
-      const hints=new Map(); hints.set(H.POSSIBLE_FORMATS, formats); hints.set(H.TRY_HARDER,true);
-      reader=new ZXing.BrowserMultiFormatReader(hints, 400); // 400ms 주기
-      await reader.decodeFromVideoDevice(deviceId, $video, (result, err)=>{
-        if(result){
-          const t=result.getText?result.getText():result.text; handleRawDetection(t);
-        }else if(err && !(err instanceof ZXing.NotFoundException)){ console.warn(err); $camStatus.textContent='오류'; }
-        else { $camStatus.textContent='검색중…'; }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: { exact: deviceId },
+          width: { ideal: 1920 }, height: { ideal: 1080 }
+        }
       });
-    }catch(e){
-      alert('스캔 시작 실패: '+(e?.message||e)); stopScan();
+      $video.srcObject = stream;
+      await $video.play();
+      state.track = stream.getVideoTracks()[0];
+    } catch (e) {
+      alert('카메라 열기 실패: ' + (e?.message || e));
+      state.running = false; return;
+    }
+
+    try {
+      // ZXing 힌트(상품 바코드 우선) + TRY_HARDER
+      const H = ZXing.DecodeHintType, F = ZXing.BarcodeFormat;
+      const hints = new Map();
+      hints.set(H.POSSIBLE_FORMATS, [F.EAN_13, F.EAN_8, F.UPC_A, F.CODE_128, F.CODE_39, F.ITF]);
+      hints.set(H.TRY_HARDER, true);
+
+      reader = new ZXing.BrowserMultiFormatReader(hints, 600);
+      await reader.decodeFromVideoDevice(
+        deviceId,
+        $video,
+        (result, err) => {
+          if (result) {
+            const text = result.getText ? result.getText() : result.text;
+            const now = Date.now();
+            if (text === state.lastDetected && (now - state.lastDetectAt) < 1200) return;
+            state.lastDetected = text; state.lastDetectAt = now;
+            addBarcode(text);
+            $lastMsg.textContent = `인식: ${text}`;
+            $camStatus.textContent = '감지됨';
+          } else if (err && !(err instanceof ZXing.NotFoundException)) {
+            console.warn(err);
+            $camStatus.textContent = '오류';
+          } else {
+            $camStatus.textContent = '검색중…';
+          }
+        }
+      );
+    } catch (e) {
+      alert('스캔 시작 실패: ' + (e?.message || e));
+      stopScan();
     }
   }
 
-  function stopScan(){
-    state.running=false; cancelAnimationFrame(raf); det=null;
-    try{ reader?.reset(); }catch{}
-    const s=$video.srcObject; if(s){ s.getTracks().forEach(t=>t.stop()); $video.srcObject=null; }
-    state.track=null; state.torchOn=false; $camStatus.textContent='정지';
-    stable={ value:"", hits:0, lastAt:0 }; cooldownUntil=0;
+  function stopScan() {
+    state.running = false;
+    try { reader?.reset(); } catch {}
+    const s = $video.srcObject; if (s) { s.getTracks().forEach(t => t.stop()); $video.srcObject=null; }
+    state.track = null; state.torchOn = false;
+    $camStatus.textContent = '정지';
   }
 
-  $scan.onclick=startScan; $stop.onclick=stopScan;
+  // 버튼 연결
+  document.getElementById('scanBtn').onclick = startScan;
+  document.getElementById('stopBtn').onclick = stopScan;
 
   render();
 })();
